@@ -13,5 +13,7 @@ setup(
     install_requires = [
         "sqlalchemy",
         "pg8000",
+        "click",
+        "click-config-file",
     ]
 )

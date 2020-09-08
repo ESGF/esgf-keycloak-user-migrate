@@ -7,6 +7,7 @@ __license__ = "BSD - see LICENSE file in top-level package directory"
 
 
 import click
+import click_config_file
 import requests
 import json
 import logging
@@ -147,6 +148,7 @@ def populate_keycloak(users, url, realm, api_key):
 @click.option("-U", "--database_user",
               help="The database user.")
 @click.option("--database_password", prompt=True, hide_input=True)
+@click_config_file.configuration_option()
 def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         database_host, database_port, database_name, database_user,
         database_password):

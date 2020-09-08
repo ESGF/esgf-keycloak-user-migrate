@@ -66,7 +66,7 @@ class User(Base):
 
     username = Column(String)       # username
     firstname = Column(String)      # first name
-    middlename = Column(String)     # first name
+    middlename = Column(String)     # appended to first name
     lastname = Column(String)       # last name
     email = Column(String)          # email
 
