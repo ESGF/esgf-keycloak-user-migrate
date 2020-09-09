@@ -1,4 +1,4 @@
-""" Exceptions raised by this library. """
+""" Exceptions raised by Keycloak interactions. """
 
 __author__ = "William Tucker"
 __date__ = "2020-08-19"
@@ -31,6 +31,6 @@ class KeycloakAuthenticationError(KeycloakError):
     pass
 
 
-class DatabaseConnectionError(Exception):
-    """ Raised when a database connection attempt failed. """
+class KeycloakConflictError(KeycloakError):
+    """ Raised on a 409 response from the Keycloak server. """
     pass

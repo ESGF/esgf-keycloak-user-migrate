@@ -8,127 +8,21 @@ __license__ = "BSD - see LICENSE file in top-level package directory"
 
 import click
 import click_config_file
-import requests
-import json
 import logging
+import importlib
 
 from requests.exceptions import ConnectionError
 from sqlalchemy.exc import ProgrammingError
 
-from usermigrate.db.models import User
-from usermigrate.user import KeycloakUser
 from usermigrate.db import Connection
-from usermigrate.exceptions import KeycloakAuthenticationError, \
-    KeycloakCommunicationError, DatabaseConnectionError
+from usermigrate.keycloak import KeycloakApi, parse_groups
+from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
+    KeycloakCommunicationError, KeycloakConflictError
 
 
 LOG = logging.getLogger(__name__)
 
-KEYCLOAK_TOKEN_ENDPOINT = \
-    "{url}/auth/realms/{realm}/protocol/openid-connect/token"
-KEYCLOAK_API_ENDPOINT = \
-    "{url}/auth/admin/realms/{realm}"
-
-
-def get_api_key(connection_data, url, realm):
-
-    endpoint = KEYCLOAK_TOKEN_ENDPOINT.format(url=url, realm=realm)
-    response = requests.post(endpoint, data=connection_data)
-
-    if response.ok:
-        return json.loads(response.text)["access_token"]
-    elif response.status_code == 401:
-        raise KeycloakAuthenticationError(
-            ("Couldn't authenticate with Keycloak user '{}'. Is your"
-             " password correct?").format(connection_data["username"]),
-            endpoint)
-    else:
-        raise KeycloakCommunicationError((f"Failed to retrieve API token:"
-            f" got {response.status_code} response."), endpoint)
-
-
-def load_users(connection_data):
-
-    with Connection(**connection_data) as connection:
-
-        keycloak_users = []
-        for user in connection.load_users(User):
-            keycloak_users.append(user.as_keycloak_user())
-
-        return keycloak_users
-
-
-def parse_permissions(users):
-
-    groups = set()
-    roles = set()
-
-    for user in users:
-        for permission in user.permissions:
-
-            groups.add(permission.group)
-            roles.add(permission.role)
-
-    return groups, roles
-
-
-def populate_keycloak(users, url, realm, api_key):
-
-    api_endpoint = KEYCLOAK_API_ENDPOINT.format(url=url, realm=realm)
-    users_endpoint = f"{api_endpoint}/users"
-    groups_endpoint = f"{api_endpoint}/groups"
-    roles_endpoint = f"{api_endpoint}/roles"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    # Determine unique roles and groups to add to Keycloak from
-    # parsed user permissions
-    print(f"Calculating unique groups and roles.")
-    groups, roles = parse_permissions(users)
-
-    print(f"Loading groups into Keycloak.")
-    for group in groups:
-
-        data = {"name": group}
-        response = requests.post(groups_endpoint, headers=headers, data=data)
-
-        if not response.ok:
-            raise KeycloakCommunicationError((f"Got {response.status_code}"
-                f" response attempting to load group '{group}'"),
-                groups_endpoint)
-
-    print(f"Loading roles into Keycloak.")
-    for role in roles:
-
-        data = {"name": role}
-        response = requests.post(roles_endpoint, headers=headers, data=data)
-
-        if not response.ok:
-            raise KeycloakCommunicationError((f"Got {response.status_code}"
-                f" response attempting to load role '{role}'"),
-                roles_endpoint)
-
-    loaded_count = 0
-    existing_count = 0
-    for user in users:
-
-        data = user.data
-        response = requests.post(users_endpoint, headers=headers, data=data)
-
-        if response.ok:
-            loaded_count += 1
-
-        elif response.status_code == 409:
-            print(f"User '{user}' already exists, cannot overwrite.")
-            existing_count += 1
-
-        else:
-            raise KeycloakCommunicationError((f"Got {response.status_code}"
-                f" response attempting to load user '{user}'"), users_endpoint)
-
-    return loaded_count, existing_count
+DEFAULT_USER_MODEL = "usermigrate.db.models.User"
 
 
 @click.command()
@@ -148,10 +42,20 @@ def populate_keycloak(users, url, realm, api_key):
 @click.option("-U", "--database_user",
               help="The database user.")
 @click.option("--database_password", prompt=True, hide_input=True)
+@click.option("-m", "--user_model", default=DEFAULT_USER_MODEL,
+              help=("Python import path to a valid SQLAlchemy model"
+                    " representing a Keycloak user."))
 @click_config_file.configuration_option()
 def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         database_host, database_port, database_name, database_user,
-        database_password):
+        database_password, user_model):
+    """ Migrates users and groups from a specified database into Keycloak.
+    Will not overwrite existing users or groups. """
+
+    # Load the SQLAlchemy user model
+    module_name, _, class_name = user_model.rpartition('.')
+    user_model_module = importlib.import_module(module_name)
+    user_model_class = getattr(user_model_module, class_name)
 
     # Setup database connection values
     database_connection_data = {
@@ -164,9 +68,15 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
 
     # Attempt to parse Keycloak-compatible user objects from the database
     print(f"Beginning user discovery...")
-    users = None
+    users = []
     try:
-        users = load_users(database_connection_data)
+
+        with Connection(**database_connection_data) as connection:
+
+            database_users = connection.load_users(user_model_class)
+            for user in database_users:
+                users.append(user.data)
+
         print(f"Discovered {len(users)} users.")
 
     except ProgrammingError as e:
@@ -179,31 +89,19 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         print("Nothing to do.")
         return
 
-    # Setup Keycloak API token request
-    keycloak_token_request_data = {
-        "client_id": "admin-cli",
-        "grant_type": "password",
-        "username": keycloak_user,
-        "password": keycloak_password
-    }
+    # Determine unique groups to add to Keycloak
+    groups = parse_groups(users)
 
     keycloak_url = keycloak_url.rstrip('/')
 
     # Attempt to populate the Keycloak server with discovered users
     print(f"Importing users into Keycloak...")
     try:
-        api_key = get_api_key(
-            keycloak_token_request_data, keycloak_url, keycloak_realm)
-        print("Retrieved API access token.")
 
-        loaded_count, existing_count = populate_keycloak(
-            users, keycloak_url, keycloak_realm, api_key)
+        with KeycloakApi(keycloak_url, keycloak_realm, keycloak_user, \
+            keycloak_password) as api:
 
-        message = f"Loaded {loaded_count} out of {len(users)} users."
-        if existing_count > 0:
-            message = (f"{message} {existing_count} users were already in"
-                " Keycloak and did not get overwritten.")
-        print(message)
+            populate_keycloak(api, users, groups)
 
     except ConnectionError:
         LOG.error(("Couldn't connect to Keycloak server '{}'."
@@ -217,6 +115,39 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
     except KeycloakAuthenticationError as e:
         LOG.error(("").format(keycloak_user))
         return
+
+
+def populate_keycloak(api, users, groups):
+    """ Imports a set of Keycloak compatible users into Keycloak. """
+
+    print(f"Importing groups into Keycloak.")
+    for group in groups:
+
+        try:
+            api.post_group(group)
+
+        except KeycloakConflictError:
+            print(f"Group '{group}' already exists, skipping.")
+
+    print(f"Importing users into Keycloak.")
+    loaded_count = 0
+    existing_count = 0
+    for user in users:
+
+        try:
+            success = api.post_user(user)
+            if success:
+                loaded_count += 1
+
+        except KeycloakConflictError:
+            print(f"User '{user}' already exists, cannot overwrite.")
+            existing_count += 1
+
+    message = f"Imported {loaded_count} out of {len(users)} users."
+    if existing_count > 0:
+        message = (f"{message} {existing_count} users were already in"
+            " Keycloak and did not get overwritten.")
+    print(message)
 
 
 if __name__ == "__main__":

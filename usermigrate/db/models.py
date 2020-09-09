@@ -10,13 +10,14 @@ from sqlalchemy import Column, Table, MetaData, String, Integer, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import mapper, relationship
 
-from usermigrate import KeycloakUser, KeycloakPermission
+from usermigrate.keycloak import KeycloakUser
 
 
 Base = declarative_base()
 
 
 class Permission(Base):
+    """ Maps users with a group and a role. """
 
     __tablename__ = "permission"
     __table_args__ = {"schema": "esgf_security"}
@@ -34,6 +35,7 @@ class Permission(Base):
 
 
 class Group(Base):
+    """ A group that a user can belong to. """
 
     __tablename__ = "group"
     __table_args__ = {"schema": "esgf_security"}
@@ -46,6 +48,7 @@ class Group(Base):
 
 
 class Role(Base):
+    """ A role that a user can have in a group. """
 
     __tablename__ = "role"
     __table_args__ = {"schema": "esgf_security"}
@@ -57,7 +60,8 @@ class Role(Base):
     permissions = relationship("Permission", back_populates="role")
 
 
-class User(Base):
+class User(KeycloakUser, Base):
+    """ Represents an ESGF user in the database. """
 
     __tablename__ = "user"
     __table_args__ = {"schema": "esgf_security"}
@@ -73,19 +77,17 @@ class User(Base):
     # permissions
     permissions = relationship("Permission", back_populates="user")
 
-    def as_keycloak_user(self):
+    @property
+    def data(self):
 
-        keycloak_permissions = []
+        groups = []
         for permission in self.permissions:
+            groups.append(permission.group.name)
 
-            keycloak_permission = KeycloakPermission(
-                permission.group.name, permission.role.name)
-            keycloak_permissions.append(keycloak_permission)
-
-        return KeycloakUser(
-            self.username,
-            f"{self.firstname} {self.middlename}",
-            self.lastname,
-            self.email,
-            keycloak_permissions
-        )
+        return {
+            "username": self.username,
+            "firstName": self.firstname,
+            "lastName": self.lastname,
+            "email": self.email,
+            "groups": groups,
+        }
