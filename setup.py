@@ -11,9 +11,11 @@ setup(
     license="BSD",
     packages=find_packages(),
     install_requires = [
-        "sqlalchemy",
-        "pg8000",
         "click",
         "click-config-file",
+        "pg8000",
+        "requests",
+        "sqlalchemy",
+        "tqdm",
     ]
 )

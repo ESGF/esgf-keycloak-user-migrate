@@ -6,5 +6,5 @@ __copyright__ = "Copyright 2020 United Kingdom Research and Innovation"
 __license__ = "BSD - see LICENSE file in top-level package directory"
 
 
-from .utils import parse_groups, KeycloakApi
+from .utils import KeycloakApi
 from .user import KeycloakUser

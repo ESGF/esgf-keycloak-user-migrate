@@ -13,18 +13,6 @@ from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
     KeycloakCommunicationError, KeycloakConflictError
 
 
-def parse_groups(users):
-    """ Find a set of groups which users could belong to. """
-
-    groups = set()
-    for user in users:
-        for group in user["groups"]:
-            groups.add(group)
-
-    for group in groups:
-        yield { "name": group }
-
-
 class KeycloakApi:
 
     TOKEN_ENDPOINT = \
@@ -32,12 +20,13 @@ class KeycloakApi:
     API_ENDPOINT = \
         "{url}/auth/admin/realms/{realm}"
 
-    def __init__(self, url, realm, user, password):
+    def __init__(self, url, realm, user, password, verify=True):
 
         self._url = url
         self._realm = realm
         self._user = user
         self._password = password
+        self._verify = verify
 
         api_endpoint = self.API_ENDPOINT.format(url=url, realm=realm)
         self._groups_endpoint = f"{api_endpoint}/groups"
@@ -45,14 +34,18 @@ class KeycloakApi:
 
     def __enter__(self):
 
-        self._setup_key()
+        access_data = self._fetch_access_data()
+
+        self._key = access_data["access_token"]
+        self._access_expires_in = access_data["expires_in"]
+
         return self
 
     def __exit__(self, *args):
 
         self._key = None
 
-    def _setup_key(self):
+    def _fetch_access_data(self):
         """ Sets the key for interacting with the Admin API. """
 
         # Construct Keycloak API token request
@@ -64,18 +57,34 @@ class KeycloakApi:
         }
 
         endpoint = self.TOKEN_ENDPOINT.format(url=self._url, realm=self._realm)
-        response = requests.post(endpoint, data=token_request_data)
+        response = requests.post(endpoint, data=token_request_data,
+            verify=self._verify)
 
         if response.ok:
-            self._key = json.loads(response.text)["access_token"]
+
+            return json.loads(response.text)
+
         elif response.status_code == 401:
             raise KeycloakAuthenticationError(
                 ("Couldn't authenticate with Keycloak user '{}'. Is your"
-                " password correct?").format(connection_data["username"]),
+                " password correct?").format(self._user),
                 endpoint)
         else:
             raise KeycloakCommunicationError((f"Failed to retrieve API token:"
                 f" got {response.status_code} response."), endpoint)
+
+    @property
+    def access_expires(self):
+        return self._access_expires_in
+
+    def check_connection(self):
+        if (self._fetch_access_data()):
+            return True
+
+    def search(self, endpoint):
+        """ Search for data in Keycloak. """
+
+        pass
 
     def post(self, endpoint, data):
         """ Post some data to a Keycloak API endpoint. """
@@ -84,7 +93,8 @@ class KeycloakApi:
             "Authorization": f"Bearer {self._key}",
             "Content-Type": "application/json",
         }
-        response = requests.post(endpoint, headers=headers, json=data)
+        response = requests.post(endpoint, headers=headers, json=data,
+            verify=self._verify)
 
         if response.status_code == 409:
             raise KeycloakConflictError("Data conflict.", endpoint)
