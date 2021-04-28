@@ -29,8 +29,10 @@ class KeycloakApi:
         self._verify = verify
 
         api_endpoint = self.API_ENDPOINT.format(url=url, realm=realm)
-        self._groups_endpoint = f"{api_endpoint}/groups"
-        self._users_endpoint = f"{api_endpoint}/users"
+        self._api_endpoints = {
+            "group": f"{api_endpoint}/groups",
+            "user": f"{api_endpoint}/users",
+        }
 
     def __enter__(self):
 
@@ -86,9 +88,13 @@ class KeycloakApi:
 
         pass
 
-    def post(self, endpoint, data):
+    def post(self, endpoint_key, data):
         """ Post some data to a Keycloak API endpoint. """
 
+        if endpoint_key not in self._api_endpoints:
+            raise ValueError(f"No endpoint for key '{endpoint_key}'")
+
+        endpoint = self._api_endpoints[endpoint_key]
         headers = {
             "Authorization": f"Bearer {self._key}",
             "Content-Type": "application/json",
@@ -104,9 +110,3 @@ class KeycloakApi:
                 f"Got {response.status_code} response.", endpoint)
 
         return True
-
-    def post_group(self, data):
-        return self.post(self._groups_endpoint, data)
-
-    def post_user(self, data):
-        return self.post(self._users_endpoint, data)
