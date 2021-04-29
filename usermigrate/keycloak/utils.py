@@ -9,6 +9,8 @@ __license__ = "BSD - see LICENSE file in top-level package directory"
 import requests
 import json
 
+from datetime import datetime, timedelta
+
 from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
     KeycloakCommunicationError, KeycloakConflictError
 
@@ -28,6 +30,8 @@ class KeycloakApi:
         self._password = password
         self._verify = verify
 
+        self._reset_token()
+
         api_endpoint = self.API_ENDPOINT.format(url=url, realm=realm)
         self._api_endpoints = {
             "group": f"{api_endpoint}/groups",
@@ -36,34 +40,29 @@ class KeycloakApi:
 
     def __enter__(self):
 
-        access_data = self._fetch_access_data()
-
-        self._key = access_data["access_token"]
-        self._access_expires_in = access_data["expires_in"]
-
+        self._update_token()
         return self
 
     def __exit__(self, *args):
 
-        self._key = None
+        self._reset_token()
 
-    def _fetch_access_data(self):
+    def _reset_token(self):
+
+        self._access_token = None
+        self._refresh_token = None
+        self._expires = datetime.now()
+        self._refresh_expires = datetime.now()
+
+    def _fetch_access_data(self, post_data):
         """ Sets the key for interacting with the Admin API. """
 
         # Construct Keycloak API token request
-        token_request_data = {
-            "client_id": "admin-cli",
-            "grant_type": "password",
-            "username": self._user,
-            "password": self._password
-        }
-
         endpoint = self.TOKEN_ENDPOINT.format(url=self._url, realm=self._realm)
-        response = requests.post(endpoint, data=token_request_data,
+        response = requests.post(endpoint, data=post_data,
             verify=self._verify)
 
         if response.ok:
-
             return json.loads(response.text)
 
         elif response.status_code == 401:
@@ -75,28 +74,62 @@ class KeycloakApi:
             raise KeycloakCommunicationError((f"Failed to retrieve API token:"
                 f" got {response.status_code} response."), endpoint)
 
-    @property
-    def access_expires(self):
-        return self._access_expires_in
+    def _update_token(self, store=True):
+
+        near_time = datetime.now() + timedelta(minutes=1)
+
+        # Skip if token still valid
+        if near_time < self._expires:
+            return
+
+        request_data = None
+        do_refresh = False
+        if self._refresh_token and near_time < self._refresh_expires:
+            do_refresh = True
+
+        if do_refresh:
+            request_data = {
+                "client_id": "admin-cli",
+                "grant_type": "refresh_token",
+                "refresh_token": self._refresh_token
+            }
+        else:
+            request_data = {
+                "client_id": "admin-cli",
+                "grant_type": "password",
+                "username": self._user,
+                "password": self._password
+            }
+
+        access_data = self._fetch_access_data(request_data)
+
+        # Store access token
+        self._access_token = access_data["access_token"]
+        expires_in = access_data["expires_in"]
+        self._expires = datetime.now() + timedelta(seconds=expires_in)
+
+        # Store refresh token
+        self._refresh_token = access_data["refresh_token"]
+        refresh_expires_in = access_data["refresh_expires_in"]
+        self._refresh_expires = datetime.now() + timedelta(
+            seconds=refresh_expires_in)
 
     def check_connection(self):
-        if (self._fetch_access_data()):
-            return True
 
-    def search(self, endpoint):
-        """ Search for data in Keycloak. """
-
-        pass
+        self._update_token(store=False)
+        return True
 
     def post(self, endpoint_key, data):
         """ Post some data to a Keycloak API endpoint. """
+
+        self._update_token()
 
         if endpoint_key not in self._api_endpoints:
             raise ValueError(f"No endpoint for key '{endpoint_key}'")
 
         endpoint = self._api_endpoints[endpoint_key]
         headers = {
-            "Authorization": f"Bearer {self._key}",
+            "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
         }
         response = requests.post(endpoint, headers=headers, json=data,

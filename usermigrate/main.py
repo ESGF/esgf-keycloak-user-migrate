@@ -157,9 +157,6 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
                 urllib3.disable_warnings(
                     urllib3.exceptions.InsecureRequestWarning)
 
-            minutes_left, _ = divmod(keycloak_api.access_expires, 60)
-            print(f"Keycloak access token will last {minutes_left} minutes.")
-
             import_objects = [
                 ("group", "name", groups),
                 ("user", "username", users),
@@ -187,19 +184,11 @@ def discover(database_connection_data, user_model_class, cache_file_path):
 
     start = time.time()
     try:
-        with open(cache_file_path, "w") as user_cache, \
-                Connection(**database_connection_data) as connection:
+        with Connection(**database_connection_data) as connection:
 
             database_users = connection.load_users(user_model_class)
-            new_line = False
             for user in database_users:
-
-                if new_line:
-                    user_cache.write("\n")
-                else:
-                    new_line = True
-
-                user_cache.write(json.dumps(user.data))
+                cache_object(cache_file_path, user.data)
 
     except ProgrammingError as e:
 
@@ -208,6 +197,7 @@ def discover(database_connection_data, user_model_class, cache_file_path):
 
     except Exception as e:
         LOG.error(f"User discovery failed: {e}")
+        return
 
     end = time.time()
     print((f"Database query completed in {int(end - start)} seconds."))
@@ -224,13 +214,18 @@ def populate_keycloak(api, object_type, values, name_key):
         print(f"Removing previous log file.")
         os.remove(log_file_path)
 
+    retry_cache_path = os.path.abspath(f"{object_type}_retry_cache")
+    if os.path.exists(retry_cache_path):
+        print(f"Removing previous retry cache.")
+        os.remove(retry_cache_path)
+
     print(f"Writing errors to {log_file_path}.")
 
     print(f"Importing {len(values)} {object_type} objects into Keycloak.")
 
     loaded_count = 0
-    skipped_count = 0
     existing_count = 0
+    skipped_count = 0
     failed_count = 0
 
     for value in tqdm(values):
@@ -240,6 +235,7 @@ def populate_keycloak(api, object_type, values, name_key):
             write_log_message(log_file_path,
                 f"Name field missing from {value}, skipping")
             skipped_count += 1
+            cache_object(retry_cache_path, value)
             continue
 
         try:
@@ -256,7 +252,9 @@ def populate_keycloak(api, object_type, values, name_key):
             write_log_message(log_file_path,
                 f"Failed to import {object_type} {value}, error was: {e}")
             failed_count += 1
+            cache_object(retry_cache_path, value)
 
+    cached_for_retry_count = skipped_count + failed_count
     message = (f"Imported {loaded_count} out of {len(values)}"
         f" {object_type} objects. There were {failed_count} failures.")
     if skipped_count > 0:
@@ -265,6 +263,9 @@ def populate_keycloak(api, object_type, values, name_key):
     if existing_count > 0:
         message = (f"{message}\n{existing_count} {object_type} objects"
             " were already in Keycloak and did not get overwritten.")
+    if cached_for_retry_count > 0:
+        message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
+            f" {cached_for_retry_count} skipped or failed objects.")
     print(message)
     write_log_message(log_file_path, message)
 
@@ -274,6 +275,20 @@ def write_log_message(log_file_path, message):
 
     with open(log_file_path, "a") as log_file:
         log_file.write(f"{message}\n")
+
+
+def cache_object(cache_file_path, object_data):
+    """ Write an object dict to a file of a file. """
+
+    add_new_line = False
+    if os.path.exists(cache_file_path):
+        add_new_line = True
+
+    with open(cache_file_path, "a") as cache_file:
+
+        if add_new_line:
+            cache_file.write("\n")
+        cache_file.write(json.dumps(object_data))
 
 
 if __name__ == "__main__":
