@@ -122,7 +122,14 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
 
         # Attempt to parse Keycloak-compatible user objects from the database
         print(f"Discovering users from the database...")
-        discover(database_connection_data, user_model_class, cache_file_path)
+        try:
+            discover(database_connection_data, user_model_class, cache_file_path)
+
+        except Exception as e:
+
+            print("Cleaning up failed cache")
+            os.remove(cache_file_path)
+            return
 
     users = []
     try:
@@ -193,11 +200,12 @@ def discover(database_connection_data, user_model_class, cache_file_path):
     except ProgrammingError as e:
 
         LOG.error("Error connecting to the database: {}".format(str(e)))
-        return
+        raise e
 
     except Exception as e:
+
         LOG.error(f"User discovery failed: {e}")
-        return
+        raise e
 
     end = time.time()
     print((f"Database query completed in {int(end - start)} seconds."))
