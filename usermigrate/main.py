@@ -209,7 +209,7 @@ def populate_keycloak(api, object_type, values, name_key):
 
     print(f"Starting {object_type} import.")
 
-    log_file_path = os.path.abspath(f"import_{object_type}.log")
+    log_file_path = os.path.abspath(f"{object_type}_import.log")
     if os.path.exists(log_file_path):
         print(f"Removing previous log file.")
         os.remove(log_file_path)
