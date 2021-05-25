@@ -15,8 +15,11 @@ import os
 import time
 import urllib3
 
+from enum import Enum
+from functools import partial
+from multiprocessing import Pool
 from sqlalchemy.exc import ProgrammingError
-from tqdm import tqdm
+from tqdm.contrib.concurrent import process_map
 
 from usermigrate.db import Connection
 from usermigrate.keycloak import KeycloakApi
@@ -212,6 +215,47 @@ def discover(database_connection_data, user_model_class, cache_file_path):
     print(f"Created user cache at {cache_file_path}")
 
 
+class ImportResult(Enum):
+
+    FAILED = 0
+    LOADED = 1
+    EXISTS = 2
+    SKIPPED = 3
+
+
+def import_value(value, object_type, name_key, api, log_file_path, retry_cache_path):
+
+    name = value.get(name_key)
+    if not name:
+
+        write_log_message(log_file_path,
+            f"Name field missing from {value}, skipping")
+        cache_object(retry_cache_path, value)
+
+        return ImportResult.SKIPPED
+
+    try:
+
+        success = api.post(object_type, value)
+        if success:
+            return ImportResult.LOADED
+
+    except KeycloakConflictError:
+
+        write_log_message(log_file_path,
+            f"The {object_type} {name} already exists, cannot overwrite.")
+
+        return ImportResult.EXISTS
+
+    except Exception as e:
+
+        write_log_message(log_file_path,
+            f"Failed to import {object_type} {value}, error was: {e}")
+        cache_object(retry_cache_path, value)
+
+        return ImportResult.FAILED
+
+
 def populate_keycloak(api, object_type, values, name_key):
     """ Imports a set of Keycloak compatible objects into Keycloak. """
 
@@ -231,36 +275,29 @@ def populate_keycloak(api, object_type, values, name_key):
 
     print(f"Importing {len(values)} {object_type} objects into Keycloak.")
 
-    loaded_count = 0
-    existing_count = 0
-    skipped_count = 0
-    failed_count = 0
+    loop_kwargs = {
+        "object_type": object_type,
+        "name_key": name_key,
+        "api": api,
+        "log_file_path": log_file_path,
+        "retry_cache_path": retry_cache_path,
+    }
+    loop_function = partial(import_value, **loop_kwargs)
+    results = process_map(loop_function, values, max_workers=8, chunksize=1)
 
-    for value in tqdm(values):
+    report = {
+        ImportResult.FAILED: 0,
+        ImportResult.LOADED: 0,
+        ImportResult.EXISTS: 0,
+        ImportResult.SKIPPED: 0,
+    }
+    for result in results:
+        report[result] += 1
 
-        name = value.get(name_key)
-        if not name:
-            write_log_message(log_file_path,
-                f"Name field missing from {value}, skipping")
-            skipped_count += 1
-            cache_object(retry_cache_path, value)
-            continue
-
-        try:
-            success = api.post(object_type, value)
-            if success:
-                loaded_count += 1
-
-        except KeycloakConflictError:
-            write_log_message(log_file_path,
-                f"The {object_type} {name} already exists, cannot overwrite.")
-            existing_count += 1
-
-        except Exception as e:
-            write_log_message(log_file_path,
-                f"Failed to import {object_type} {value}, error was: {e}")
-            failed_count += 1
-            cache_object(retry_cache_path, value)
+    failed_count = report[ImportResult.FAILED]
+    loaded_count = report[ImportResult.LOADED]
+    existing_count = report[ImportResult.EXISTS]
+    skipped_count = report[ImportResult.SKIPPED]
 
     cached_for_retry_count = skipped_count + failed_count
     message = (f"Imported {loaded_count} out of {len(values)}"
