@@ -119,20 +119,17 @@ class KeycloakApi:
         self._update_token(store=False)
         return True
 
-    def post(self, endpoint_key, data):
-        """ Post some data to a Keycloak API endpoint. """
+    def create_group(self, group_name):
+        """ Create a group in Keycloak. """
 
         self._update_token()
 
-        if endpoint_key not in self._api_endpoints:
-            raise ValueError(f"No endpoint for key '{endpoint_key}'")
-
-        endpoint = self._api_endpoints[endpoint_key]
+        endpoint = self._api_endpoints["group"]
         headers = {
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
         }
-        response = requests.post(endpoint, headers=headers, json=data,
+        response = requests.post(endpoint, headers=headers, json={"name": group_name},
             verify=self._verify)
 
         if response.status_code == 409:
@@ -143,3 +140,56 @@ class KeycloakApi:
                 f"Got {response.status_code} response.", endpoint)
 
         return True
+
+    def create_user(self, user_data, overwrite=False):
+        """ Post some data to a Keycloak API endpoint. """
+
+        self._update_token()
+
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Content-Type": "application/json",
+        }
+
+        endpoint = self._api_endpoints["user"]
+        query = {
+            "briefRepresentation": True,
+            "exact": True,
+            "username": user_data["username"]
+        }
+
+        response = requests.get(endpoint, headers=headers, params=query,
+            verify=self._verify)
+
+        results = response.json()
+
+        # Create a new user
+        if len(results) == 0:
+
+            response = requests.post(endpoint, headers=headers, json=user_data,
+                verify=self._verify)
+
+            if response.status_code == 409:
+                raise KeycloakConflictError("Data conflict.", endpoint)
+
+            elif not response.ok:
+                raise KeycloakCommunicationError(
+                    f"Got {response.status_code} response.", endpoint)
+
+            return True
+
+        if not overwrite:
+            raise KeycloakConflictError("Data conflict.", endpoint)
+
+        # Update existing user
+        user_id = results[0]["id"]
+        endpoint = "{0}/{1}".format(endpoint, user_id)
+
+        response = requests.put(endpoint, headers=headers, json=user_data,
+            verify=self._verify)
+
+        if not response.ok:
+            raise KeycloakCommunicationError(
+                f"Got {response.status_code} response.", endpoint)
+
+        return False

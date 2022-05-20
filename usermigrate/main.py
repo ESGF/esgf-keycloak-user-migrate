@@ -46,6 +46,8 @@ DEFAULT_USER_MODEL = "usermigrate.db.models.User"
               help="Ignore Keycloak server certificate verification.")
 @click.option("-f", "--file_input",
               help="Path to a JSON file containing a list of users to import.")
+@click.option("--skip-cache", default=False,
+              help="Skip checking for previously cached users.")
 @click.option("-H", "--database_host", default="localhost",
               help="The database host.")
 @click.option("-p", "--database_port", default="5432",
@@ -58,10 +60,13 @@ DEFAULT_USER_MODEL = "usermigrate.db.models.User"
 @click.option("-m", "--user_model", default=DEFAULT_USER_MODEL,
               help=("Python import path to a valid SQLAlchemy model"
                     " representing a Keycloak user."))
+@click.option("-o", "--overwrite", default=False,
+              help="Overwrite existing Keycloak users.")
 @click_config_file.configuration_option()
 def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
-        cacert, insecure, file_input, database_host, database_port,
-        database_name, database_user, database_password, user_model):
+        cacert, insecure, file_input, skip_cache, database_host, database_port,
+        database_name, database_user, database_password, user_model,
+        overwrite):
     """ Migrates users and groups from a specified database into Keycloak.
     Will not overwrite existing users or groups. """
 
@@ -102,7 +107,7 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
     if file_input:
         print(f"Reading users from input file {file_input}...")
 
-    elif not file_input and os.path.exists(cache_file_path):
+    elif not skip_cache and not file_input and os.path.exists(cache_file_path):
 
         print(f"Found cached users at {cache_file_path}.")
         response = None
@@ -148,11 +153,10 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         return
 
     print("Parsing groups from users...")
-    groups = {}
+    groups = set()
     for user in users:
         for group in user["groups"]:
-            groups[group] = {"name": group}
-    groups = groups.values()
+            groups.add(group)
 
     print(f"{len(users)} users and {len(groups)} unique groups found.")
 
@@ -167,13 +171,8 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
                 urllib3.disable_warnings(
                     urllib3.exceptions.InsecureRequestWarning)
 
-            import_objects = [
-                ("group", "name", groups),
-                ("user", "username", users),
-            ]
-            for object_type, name_key, values in import_objects:
-                populate_keycloak(
-                    keycloak_api, object_type, values, name_key=name_key)
+            populate_groups(keycloak_api, groups)
+            populate_users(keycloak_api, users, overwrite)
 
     except ConnectionError as e:
         LOG.error(("Couldn't connect to Keycloak server '{}'. Error was: {}"
@@ -215,79 +214,95 @@ def discover(database_connection_data, user_model_class, cache_file_path):
     print(f"Created user cache at {cache_file_path}")
 
 
+def populate_groups(api, groups):
+
+    print(f"Adding {len(groups)} groups to Keycloak.")
+
+    for group in groups:
+
+        try:
+            api.create_group(group)
+
+        except Exception as e:
+            print(f"Failed to import group {group}, error was: {e}")
+
+
 class ImportResult(Enum):
 
     FAILED = 0
     LOADED = 1
-    EXISTS = 2
-    SKIPPED = 3
+    UPDATED = 2
+    EXISTS = 3
+    SKIPPED = 4
 
 
-def import_value(value, object_type, name_key, api, log_file_path, retry_cache_path):
+def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
 
-    name = value.get(name_key)
+    name = user.get("username")
     if not name:
 
         write_log_message(log_file_path,
-            f"Name field missing from {value}, skipping")
-        cache_object(retry_cache_path, value)
+            f"Username field missing from {user}, skipping")
+        cache_object(retry_cache_path, user)
 
         return ImportResult.SKIPPED
 
     try:
 
-        success = api.post(object_type, value)
-        if success:
+        created = api.create_user(user, overwrite=overwrite)
+        if created:
             return ImportResult.LOADED
+        else:
+            return ImportResult.UPDATED
 
     except KeycloakConflictError:
 
         write_log_message(log_file_path,
-            f"The {object_type} {name} already exists, cannot overwrite.")
+            f"The user {name} already exists, cannot overwrite.")
 
         return ImportResult.EXISTS
 
     except Exception as e:
 
         write_log_message(log_file_path,
-            f"Failed to import {object_type} {value}, error was: {e}")
-        cache_object(retry_cache_path, value)
+            f"Failed to import user {user}, error was: {e}")
+        cache_object(retry_cache_path, user)
 
         return ImportResult.FAILED
 
 
-def populate_keycloak(api, object_type, values, name_key):
+def populate_users(api, users, overwrite):
     """ Imports a set of Keycloak compatible objects into Keycloak. """
 
-    print(f"Starting {object_type} import.")
+    print(f"Starting user import.")
 
-    log_file_path = os.path.abspath(f"{object_type}_import.log")
+    log_file_path = os.path.abspath(f"user_import.log")
     if os.path.exists(log_file_path):
         print(f"Removing previous log file.")
         os.remove(log_file_path)
 
-    retry_cache_path = os.path.abspath(f"{object_type}_retry_cache")
+    retry_cache_path = os.path.abspath(f"user_retry_cache")
     if os.path.exists(retry_cache_path):
         print(f"Removing previous retry cache.")
         os.remove(retry_cache_path)
 
     print(f"Writing errors to {log_file_path}.")
 
-    print(f"Importing {len(values)} {object_type} objects into Keycloak.")
+    print(f"Importing {len(users)} user objects into Keycloak.")
 
     loop_kwargs = {
-        "object_type": object_type,
-        "name_key": name_key,
         "api": api,
+        "overwrite": overwrite,
         "log_file_path": log_file_path,
         "retry_cache_path": retry_cache_path,
     }
-    loop_function = partial(import_value, **loop_kwargs)
-    results = process_map(loop_function, values, max_workers=8, chunksize=1)
+    loop_function = partial(try_populate_user, **loop_kwargs)
+    results = process_map(loop_function, users, max_workers=8, chunksize=1)
 
     report = {
         ImportResult.FAILED: 0,
         ImportResult.LOADED: 0,
+        ImportResult.UPDATED: 0,
         ImportResult.EXISTS: 0,
         ImportResult.SKIPPED: 0,
     }
@@ -296,21 +311,25 @@ def populate_keycloak(api, object_type, values, name_key):
 
     failed_count = report[ImportResult.FAILED]
     loaded_count = report[ImportResult.LOADED]
+    updated_count = report[ImportResult.UPDATED]
     existing_count = report[ImportResult.EXISTS]
     skipped_count = report[ImportResult.SKIPPED]
 
     cached_for_retry_count = skipped_count + failed_count
-    message = (f"Imported {loaded_count} out of {len(values)}"
-        f" {object_type} objects. There were {failed_count} failures.")
+    message = (f"Created {loaded_count} out of {len(users)}"
+        f" users. There were {failed_count} failures.")
     if skipped_count > 0:
-        message = (f"{message}\n{skipped_count} {object_type} objects"
+        message = (f"{message}\n{skipped_count} users"
             " were skipped because their name field was missing or blank.")
+    if updated_count > 0:
+        message = (f"{message}\n{updated_count} existing users"
+            " were updated.")
     if existing_count > 0:
-        message = (f"{message}\n{existing_count} {object_type} objects"
+        message = (f"{message}\n{existing_count} users"
             " were already in Keycloak and did not get overwritten.")
     if cached_for_retry_count > 0:
         message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
-            f" {cached_for_retry_count} skipped or failed objects.")
+            f" {cached_for_retry_count} skipped or failed users.")
     print(message)
     write_log_message(log_file_path, message)
 
