@@ -18,9 +18,9 @@ from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
 class KeycloakApi:
 
     TOKEN_ENDPOINT = \
-        "{url}/auth/realms/master/protocol/openid-connect/token"
+        "{url}/realms/master/protocol/openid-connect/token"
     API_ENDPOINT = \
-        "{url}/auth/admin/realms/{realm}"
+        "{url}/admin/realms/{realm}"
 
     def __init__(self, url, realm, user, password, verify=True):
 
