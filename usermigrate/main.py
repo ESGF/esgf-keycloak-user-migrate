@@ -14,6 +14,7 @@ import logging
 import os
 import time
 import urllib3
+import yaml
 
 from enum import Enum
 from functools import partial
@@ -30,6 +31,12 @@ from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
 LOG = logging.getLogger(__name__)
 
 DEFAULT_USER_MODEL = "usermigrate.db.models.User"
+
+
+def yaml_config_provider(file_path, cmd_name):
+    settings = None
+    with open(file_path, 'r') as config_data:
+        return yaml.safe_load(config_data)
 
 
 @click.command()
@@ -62,7 +69,7 @@ DEFAULT_USER_MODEL = "usermigrate.db.models.User"
                     " representing a Keycloak user."))
 @click.option("-o", "--overwrite", default=False,
               help="Overwrite existing Keycloak users.")
-@click_config_file.configuration_option()
+@click_config_file.configuration_option(provider=yaml_config_provider)
 def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         cacert, insecure, file_input, skip_cache, database_host, database_port,
         database_name, database_user, database_password, user_model,
