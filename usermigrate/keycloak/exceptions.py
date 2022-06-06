@@ -31,6 +31,11 @@ class KeycloakAuthenticationError(KeycloakError):
     pass
 
 
+class KeycloakUsernameConflictError(KeycloakError):
+    """ Raised on a 409 response from the Keycloak server. """
+    pass
+
+
 class KeycloakConflictError(KeycloakError):
     """ Raised on a 409 response from the Keycloak server. """
     pass

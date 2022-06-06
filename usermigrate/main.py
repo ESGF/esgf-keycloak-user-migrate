@@ -25,7 +25,8 @@ from tqdm.contrib.concurrent import process_map
 from usermigrate.db import Connection
 from usermigrate.keycloak import KeycloakApi
 from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
-    KeycloakCommunicationError, KeycloakConflictError
+    KeycloakCommunicationError, KeycloakUsernameConflictError, \
+    KeycloakConflictError
 
 
 LOG = logging.getLogger(__name__)
@@ -240,7 +241,8 @@ class ImportResult(Enum):
     LOADED = 1
     UPDATED = 2
     EXISTS = 3
-    SKIPPED = 4
+    CONFLICT = 4
+    SKIPPED = 5
 
 
 def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
@@ -262,12 +264,19 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
         else:
             return ImportResult.UPDATED
 
+    except KeycloakUsernameConflictError:
+
+        write_log_message(log_file_path,
+            f"User with username {name} exists and wasn't overwritten.")
+
+        return ImportResult.EXISTS
+
     except KeycloakConflictError:
 
         write_log_message(log_file_path,
-            f"The user {name} already exists, cannot overwrite.")
+            f"Failed to add user {name} due to a data conflict.")
 
-        return ImportResult.EXISTS
+        return ImportResult.CONFLICT
 
     except Exception as e:
 
@@ -311,6 +320,7 @@ def populate_users(api, users, overwrite):
         ImportResult.LOADED: 0,
         ImportResult.UPDATED: 0,
         ImportResult.EXISTS: 0,
+        ImportResult.CONFLICT: 0,
         ImportResult.SKIPPED: 0,
     }
     for result in results:
@@ -320,6 +330,7 @@ def populate_users(api, users, overwrite):
     loaded_count = report[ImportResult.LOADED]
     updated_count = report[ImportResult.UPDATED]
     existing_count = report[ImportResult.EXISTS]
+    conflict_count = report[ImportResult.CONFLICT]
     skipped_count = report[ImportResult.SKIPPED]
 
     cached_for_retry_count = skipped_count + failed_count
@@ -334,6 +345,9 @@ def populate_users(api, users, overwrite):
     if existing_count > 0:
         message = (f"{message}\n{existing_count} users"
             " were already in Keycloak and did not get overwritten.")
+    if conflict_count > 0:
+        message = (f"{message}\n{conflict_count} users"
+            " weren't imported due to a data conflict.")
     if cached_for_retry_count > 0:
         message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
             f" {cached_for_retry_count} skipped or failed users.")

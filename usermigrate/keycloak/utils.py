@@ -12,7 +12,8 @@ import json
 from datetime import datetime, timedelta
 
 from usermigrate.keycloak.exceptions import KeycloakAuthenticationError, \
-    KeycloakCommunicationError, KeycloakConflictError
+    KeycloakCommunicationError, KeycloakUsernameConflictError, \
+    KeycloakConflictError
 
 
 class KeycloakApi:
@@ -179,7 +180,7 @@ class KeycloakApi:
             return True
 
         if not overwrite:
-            raise KeycloakConflictError("Data conflict.", endpoint)
+            raise KeycloakUsernameConflictError("Username conflict.", endpoint)
 
         # Update existing user
         user_id = results[0]["id"]
