@@ -336,12 +336,12 @@ def populate_users(api, users, overwrite, verbose=False):
     for result in results:
         report[result] += 1
 
-    failed_count = report[ImportResult.FAILED]
     loaded_count = report[ImportResult.LOADED]
     updated_count = report[ImportResult.UPDATED]
     existing_count = report[ImportResult.EXISTS]
     conflict_count = report[ImportResult.CONFLICT]
     skipped_count = report[ImportResult.SKIPPED]
+    failed_count = report[ImportResult.FAILED] + conflict_count + skipped_count
 
     cached_for_retry_count = skipped_count + failed_count
     message = (f"Created {loaded_count} out of {len(users)}"
