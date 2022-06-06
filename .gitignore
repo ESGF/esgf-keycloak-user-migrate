@@ -1,4 +1,7 @@
 settings.py
+user_cache
+user_retry_cache
+user_import_failures.csv
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python

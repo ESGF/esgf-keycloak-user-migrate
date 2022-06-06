@@ -70,11 +70,13 @@ def yaml_config_provider(file_path, cmd_name):
                     " representing a Keycloak user."))
 @click.option("-o", "--overwrite", default=False,
               help="Overwrite existing Keycloak users.")
+@click.option("-v", "--verbose", default=False,
+              help="Overwrite existing Keycloak users.")
 @click_config_file.configuration_option(provider=yaml_config_provider)
 def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         cacert, insecure, file_input, skip_cache, database_host, database_port,
         database_name, database_user, database_password, user_model,
-        overwrite):
+        overwrite, verbose):
     """ Migrates users and groups from a specified database into Keycloak.
     Will not overwrite existing users or groups. """
 
@@ -180,7 +182,7 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
                     urllib3.exceptions.InsecureRequestWarning)
 
             populate_groups(keycloak_api, groups)
-            populate_users(keycloak_api, users, overwrite)
+            populate_users(keycloak_api, users, overwrite, verbose=verbose)
 
     except ConnectionError as e:
         LOG.error(("Couldn't connect to Keycloak server '{}'. Error was: {}"
@@ -247,11 +249,20 @@ class ImportResult(Enum):
 
 def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
 
-    name = user.get("username")
-    if not name:
+    username = user.get("username")
+    if not username:
+        username = ""
+    email = user.get("email")
+    if not email:
+        email = ""
 
-        write_log_message(log_file_path,
-            f"Username field missing from {user}, skipping")
+    message_template = f"{username},{email},{{0}}"
+
+    if not username:
+
+        message = message_template.format(
+            "Can't import user because the username field is missing.")
+        write_log_message(log_file_path, message)
         cache_object(retry_cache_path, user)
 
         return ImportResult.SKIPPED
@@ -266,33 +277,32 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
 
     except KeycloakUsernameConflictError:
 
-        write_log_message(log_file_path,
-            f"User with username {name} exists and wasn't overwritten.")
-
         return ImportResult.EXISTS
 
     except KeycloakConflictError:
 
-        write_log_message(log_file_path,
-            f"Failed to add user {name} due to a data conflict.")
+        message = message_template.format(
+            "Failed to import user due to a data conflict.")
+        write_log_message(log_file_path, message)
 
         return ImportResult.CONFLICT
 
     except Exception as e:
 
-        write_log_message(log_file_path,
-            f"Failed to import user {user}, error was: {e}")
+        message = message_template.format(
+            f"Failed to import user, error was {e}")
+        write_log_message(log_file_path, message)
         cache_object(retry_cache_path, user)
 
         return ImportResult.FAILED
 
 
-def populate_users(api, users, overwrite):
+def populate_users(api, users, overwrite, verbose=False):
     """ Imports a set of Keycloak compatible objects into Keycloak. """
 
     print(f"Starting user import.")
 
-    log_file_path = os.path.abspath(f"user_import.log")
+    log_file_path = os.path.abspath(f"user_import_failures.csv")
     if os.path.exists(log_file_path):
         print(f"Removing previous log file.")
         os.remove(log_file_path)
@@ -351,8 +361,15 @@ def populate_users(api, users, overwrite):
     if cached_for_retry_count > 0:
         message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
             f" {cached_for_retry_count} skipped or failed users.")
+
+    if verbose:
+        print("Log output:\n----")
+        with open(log_file_path, "r") as log_file:
+            for line in log_file:
+                print(line.strip())
+        print("----")
+
     print(message)
-    write_log_message(log_file_path, message)
 
 
 def write_log_message(log_file_path, message):

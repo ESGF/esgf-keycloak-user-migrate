@@ -18,7 +18,7 @@ class KeycloakError(Exception):
     def __str__(self):
 
         return \
-            f"Keycloak error for endpoint {self.endpoint}: {self.message}"
+            f"Keycloak error: {self.message}"
 
 
 class KeycloakCommunicationError(KeycloakError):

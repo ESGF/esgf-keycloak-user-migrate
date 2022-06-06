@@ -189,7 +189,10 @@ class KeycloakApi:
         response = requests.put(endpoint, headers=headers, json=user_data,
             verify=self._verify)
 
-        if not response.ok:
+        if response.status_code == 409:
+            raise KeycloakConflictError("Data conflict.", endpoint)
+
+        elif not response.ok:
             raise KeycloakCommunicationError(
                 f"Got {response.status_code} response.", endpoint)
 
