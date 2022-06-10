@@ -362,12 +362,13 @@ def populate_users(api, users, overwrite, verbose=False):
         message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
             f" {cached_for_retry_count} skipped or failed users.")
 
-    if verbose:
-        print("Log output:\n----")
-        with open(log_file_path, "r") as log_file:
-            for line in log_file:
-                print(line.strip())
-        print("----")
+    if verbose and os.path.exists(log_file_path):
+
+            print("Log output:\n----")
+            with open(log_file_path, "r") as log_file:
+                for line in log_file:
+                    print(line.strip())
+            print("----")
 
     print(message)
 
