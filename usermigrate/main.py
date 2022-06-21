@@ -277,6 +277,10 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
 
     except KeycloakUsernameConflictError:
 
+        message = message_template.format(
+            "User with the same username already exists.")
+        write_log_message(log_file_path, message)
+
         return ImportResult.EXISTS
 
     except KeycloakConflictError:
