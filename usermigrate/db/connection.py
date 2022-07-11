@@ -35,6 +35,7 @@ class Connection:
         self._session.commit()
         self._session.close()
 
-    def load_users(self, user_model):
+    def load_users(self, user_model, **filter_kwargs):
 
-        return self._session.query(user_model).all()
+        query = self._session.query(user_model)
+        return query.filter_by(**filter_kwargs)

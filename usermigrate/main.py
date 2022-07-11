@@ -68,6 +68,7 @@ def yaml_config_provider(file_path, cmd_name):
 @click.option("-m", "--user_model", default=DEFAULT_USER_MODEL,
               help=("Python import path to a valid SQLAlchemy model"
                     " representing a Keycloak user."))
+@click.option("--filter", "-x", type=(str, str), multiple=True)
 @click.option("-o", "--overwrite", default=False,
               help="Overwrite existing Keycloak users.")
 @click.option("-v", "--verbose", default=False,
@@ -75,7 +76,7 @@ def yaml_config_provider(file_path, cmd_name):
 @click_config_file.configuration_option(provider=yaml_config_provider)
 def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         cacert, insecure, file_input, skip_cache, database_host, database_port,
-        database_name, database_user, database_password, user_model,
+        database_name, database_user, database_password, user_model, filter,
         overwrite, verbose):
     """ Migrates users and groups from a specified database into Keycloak.
     Will not overwrite existing users or groups. """
@@ -84,6 +85,8 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
     module_name, _, class_name = user_model.rpartition('.')
     user_model_module = importlib.import_module(module_name)
     user_model_class = getattr(user_model_module, class_name)
+
+    filter_kwargs = dict(filter)
 
     # Setup database connection values
     database_connection_data = {
@@ -141,7 +144,7 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         # Attempt to parse Keycloak-compatible user objects from the database
         print(f"Discovering users from the database...")
         try:
-            discover(database_connection_data, user_model_class, cache_file_path)
+            discover(database_connection_data, user_model_class, cache_file_path, filter_kwargs=filter_kwargs)
 
         except Exception as e:
 
@@ -198,14 +201,14 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
         return
 
 
-def discover(database_connection_data, user_model_class, cache_file_path):
+def discover(database_connection_data, user_model_class, cache_file_path, filter_kwargs={}):
     """ Discover users from a database. """
 
     start = time.time()
     try:
         with Connection(**database_connection_data) as connection:
 
-            database_users = connection.load_users(user_model_class)
+            database_users = connection.load_users(user_model_class, **filter_kwargs)
             for user in database_users:
                 cache_object(cache_file_path, user.data)
 
