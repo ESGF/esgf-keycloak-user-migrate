@@ -270,6 +270,15 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
 
         return ImportResult.SKIPPED
 
+    if not email:
+
+        message = message_template.format(
+            "Can't import user because the email field is missing.")
+        write_log_message(log_file_path, message)
+        cache_object(retry_cache_path, user)
+
+        return ImportResult.SKIPPED
+
     try:
 
         created = api.create_user(user, overwrite=overwrite)
