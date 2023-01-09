@@ -17,9 +17,10 @@ import urllib3
 import yaml
 
 from enum import Enum
-from functools import partial
+from functools import partial, partialmethod
 from multiprocessing import Pool
 from sqlalchemy.exc import ProgrammingError
+from tqdm import tqdm
 from tqdm.contrib.concurrent import process_map
 
 from usermigrate.db import Connection
@@ -87,6 +88,10 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
     user_model_class = getattr(user_model_module, class_name)
 
     filter_kwargs = dict(filter)
+
+    # Disable tqdm if not in verbose mode
+    if not verbose:
+        tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
     # Setup database connection values
     database_connection_data = {
@@ -227,17 +232,21 @@ def discover(database_connection_data, user_model_class, cache_file_path, filter
     print(f"Created user cache at {cache_file_path}")
 
 
-def populate_groups(api, groups):
+def populate_groups(api, groups, verbose=False):
 
-    print(f"Adding {len(groups)} groups to Keycloak.")
-
+    added = 0
     for group in groups:
 
         try:
             api.create_group(group)
+            added += 1
 
         except Exception as e:
-            print(f"Failed to import group {group}, error was: {e}")
+
+            if verbose:
+                print(f"Failed to import group {group}, error was: {e}")
+
+    print(f"Added {added}/{len(groups)} groups to Keycloak.")
 
 
 class ImportResult(Enum):
