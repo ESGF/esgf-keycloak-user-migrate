@@ -189,7 +189,7 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
                 urllib3.disable_warnings(
                     urllib3.exceptions.InsecureRequestWarning)
 
-            populate_groups(keycloak_api, groups)
+            populate_groups(keycloak_api, groups, verbose=verbose)
             populate_users(keycloak_api, users, overwrite, verbose=verbose)
 
     except ConnectionError as e:
@@ -259,7 +259,7 @@ class ImportResult(Enum):
     SKIPPED = 5
 
 
-def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
+def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path, verbose):
 
     username = user.get("username")
     if not username:
@@ -298,9 +298,10 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
 
     except KeycloakUsernameConflictError:
 
-        message = message_template.format(
-            "User with the same username already exists.")
-        write_log_message(log_file_path, message)
+        if verbose:
+            message = message_template.format(
+                "User with the same username already exists.")
+            write_log_message(log_file_path, message)
 
         return ImportResult.EXISTS
 
@@ -347,6 +348,7 @@ def populate_users(api, users, overwrite, verbose=False):
         "overwrite": overwrite,
         "log_file_path": log_file_path,
         "retry_cache_path": retry_cache_path,
+        "verbose": verbose,
     }
     loop_function = partial(try_populate_user, **loop_kwargs)
     results = process_map(loop_function, users, max_workers=8, chunksize=1)
