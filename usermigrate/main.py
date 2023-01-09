@@ -300,6 +300,7 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path):
         message = message_template.format(
             "Failed to import user due to a data conflict.")
         write_log_message(log_file_path, message)
+        cache_object(retry_cache_path, user)
 
         return ImportResult.CONFLICT
 
@@ -357,26 +358,38 @@ def populate_users(api, users, overwrite, verbose=False):
     existing_count = report[ImportResult.EXISTS]
     conflict_count = report[ImportResult.CONFLICT]
     skipped_count = report[ImportResult.SKIPPED]
-    failed_count = report[ImportResult.FAILED] + conflict_count + skipped_count
+    failed_count = report[ImportResult.FAILED]
 
-    cached_for_retry_count = skipped_count + failed_count
-    message = (f"Created {loaded_count} out of {len(users)}"
-        f" users. There were {failed_count} failures.")
-    if skipped_count > 0:
-        message = (f"{message}\n{skipped_count} users"
-            " were skipped because their name field was missing or blank.")
+    problems_count = failed_count + conflict_count + skipped_count
+
+    # Compile report
+    message = f"Finished importing {len(users)} user records.\n---"
+
+    # Number of created or updated/existing users
+    if loaded_count > 0:
+        message = f"{message}\nCreated {loaded_count} new users in Keycloak."
     if updated_count > 0:
-        message = (f"{message}\n{updated_count} existing users"
-            " were updated.")
+        message = (f"{message}\n{updated_count} records matched existing"
+            " Keycloak users and the Keycloak users were updated")
     if existing_count > 0:
-        message = (f"{message}\n{existing_count} users"
-            " were already in Keycloak and did not get overwritten.")
+        message = (f"{message}\n{existing_count} records matched existing"
+            " Keycloak users and were skipped.")
+
+    # Import problems or missing data
+    if problems_count > 0:
+        message = f"{message}\n---\nThere were {problems_count} problems:"
+    if skipped_count > 0:
+        message = (f"{message}\n{skipped_count} records were"
+            " skipped because the name or email field was missing or blank.")
     if conflict_count > 0:
-        message = (f"{message}\n{conflict_count} users"
+        message = (f"{message}\n{conflict_count} records"
             " weren't imported due to a data conflict.")
-    if cached_for_retry_count > 0:
+    if failed_count > 0:
+        message = (f"{message}\n{failed_count} records"
+            " weren't imported due to an unknown error.")
+    if problems_count > 0:
         message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
-            f" {cached_for_retry_count} skipped or failed users.")
+            f" {problems_count} skipped or failed users.")
 
     if verbose and os.path.exists(log_file_path):
 
