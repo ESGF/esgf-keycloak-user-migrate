@@ -197,3 +197,19 @@ class KeycloakApi:
                 f"Got {response.status_code} response.", endpoint)
 
         return False
+
+    def users_count(self):
+
+        self._update_token()
+
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Content-Type": "application/json",
+        }
+
+        endpoint = "{0}/{1}".format(self._api_endpoints["user"], "count")
+
+        response = requests.get(endpoint, headers=headers, verify=self._verify)
+
+        count = response.json()
+        return count

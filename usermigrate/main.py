@@ -179,7 +179,7 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
     print(f"{len(users)} users and {len(groups)} unique groups found.")
 
     # Attempt to populate the Keycloak server with discovered users
-    print("Starting import...")
+    print("Initialising Keycloak connection...")
     try:
 
         with keycloak_api:
@@ -189,7 +189,9 @@ def main(keycloak_url, keycloak_realm, keycloak_user, keycloak_password,
                 urllib3.disable_warnings(
                     urllib3.exceptions.InsecureRequestWarning)
 
+            print("Starting group import...")
             populate_groups(keycloak_api, groups, verbose=verbose)
+            print("Starting user import...")
             populate_users(keycloak_api, users, overwrite, verbose=verbose)
 
     except ConnectionError as e:
@@ -327,8 +329,6 @@ def try_populate_user(user, api, overwrite, log_file_path, retry_cache_path, ver
 def populate_users(api, users, overwrite, verbose=False):
     """ Imports a set of Keycloak compatible objects into Keycloak. """
 
-    print(f"Starting user import.")
-
     log_file_path = os.path.abspath(f"user_import_failures.csv")
     if os.path.exists(log_file_path):
         print(f"Removing previous log file.")
@@ -341,7 +341,8 @@ def populate_users(api, users, overwrite, verbose=False):
 
     print(f"Writing errors to {log_file_path}.")
 
-    print(f"Importing {len(users)} user objects into Keycloak.")
+    print(f"The Keycloak realm contains {api.users_count()} users.")
+    print(f"Preparing to import {len(users)} user records...")
 
     loop_kwargs = {
         "api": api,
@@ -374,7 +375,7 @@ def populate_users(api, users, overwrite, verbose=False):
     problems_count = failed_count + conflict_count + skipped_count
 
     # Compile report
-    message = f"Finished importing {len(users)} user records.\n---"
+    message = f"Finished importing {len(users)} user records:"
 
     # Number of created or updated/existing users
     if loaded_count > 0:
@@ -400,7 +401,10 @@ def populate_users(api, users, overwrite, verbose=False):
             " weren't imported due to an unknown error.")
     if problems_count > 0:
         message = (f"{message}\nRerun with '-f {retry_cache_path}' to retry"
-            f" {problems_count} skipped or failed users.")
+            f" {problems_count} skipped or failed users.\n---")
+
+    message = (f"{message}\nThere are now {api.users_count()} users in the"
+        " Keycloak realm.")
 
     if verbose and os.path.exists(log_file_path):
 
