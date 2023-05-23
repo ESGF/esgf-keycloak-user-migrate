@@ -391,8 +391,8 @@ def populate_users(api, users, overwrite, verbose=False):
     if problems_count > 0:
         message = f"{message}\n---\nThere were {problems_count} problems:"
     if skipped_count > 0:
-        message = (f"{message}\n{skipped_count} records were"
-            " skipped because the name or email field was missing or blank.")
+        message = (f"{message}\n{skipped_count} records were skipped"
+            " because the username or email field was missing or blank.")
     if conflict_count > 0:
         message = (f"{message}\n{conflict_count} records"
             " weren't imported due to a data conflict.")
